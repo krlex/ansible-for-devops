@@ -1,42 +1,130 @@
-# Ansible-based Kubernetes cluster example
+# Ansible Role: Kubernetes
 
-This is an example Kubernetes cluster built and managed with Ansible. The example is explained in more detail in Chapter 13 of [Ansible for DevOps](https://www.ansiblefordevops.com/).
+[![Build Status](https://travis-ci.org/geerlingguy/ansible-role-kubernetes.svg?branch=master)](https://travis-ci.org/geerlingguy/ansible-role-kubernetes)
 
-## Quick Start Guide
+An Ansible Role that installs [Kubernetes](https://kubernetes.io) on Linux.
 
-### 1 - Install dependencies (VirtualBox, Vagrant, Ansible)
+## Requirements
 
-  1. Download and install [VirtualBox](https://www.virtualbox.org/wiki/Downloads).
-  2. Download and install [Vagrant](http://www.vagrantup.com/downloads.html).
-  3. [Mac/Linux only] Install [Ansible](http://docs.ansible.com/intro_installation.html).
+Requires Docker; recommended role for Docker installation: `geerlingguy.docker`.
 
-Note for Windows users: *This guide assumes you're on a Mac or Linux host. Windows hosts are unsupported at this time.*
+## Role Variables
 
-### 2 - Build the Virtual Machine
+Available variables are listed below, along with default values (see `defaults/main.yml`):
 
-  1. Download this project and put it wherever you want.
-  2. Open Terminal, cd to this directory (containing the `Vagrantfile` and this README file).
-  3. Run `ansible-galaxy install -r requirements.yml -p ./roles` to install required Ansible roles.
-  4. Type in `vagrant up`, and let Vagrant do its magic.
+    kubernetes_packages:
+      - name: kubelet
+        state: present
+      - name: kubectl
+        state: present
+      - name: kubeadm
+        state: present
+      - name: kubernetes-cni
+        state: present
 
-Note: *If there are any errors during the course of running `vagrant up`, and it drops you back to your command prompt, just run `vagrant provision` to continue building the VM from where you left off. If there are still errors after doing this a few times, post an issue to this project's issue queue on GitHub with the error.*
+Kubernetes packages to be installed on the server. You can either provide a list of package names, or set `name` and `state` to have more control over whether the package is `present`, `absent`, `latest`, etc.
 
-### 3 - Configure your host machine to access the VM.
+    kubernetes_version: '1.15'
+    kubernetes_version_rhel_package: '1.15.0'
 
-  1. [Edit your hosts file](http://www.rackspace.com/knowledge_center/article/how-do-i-modify-my-hosts-file), adding the line `192.168.84.3  cluster.k8s.test` so you can connect to the VM.
+The minor version of Kubernetes to install. The plain `kubernetes_version` is used to pin an apt package version on Debian, and as the Kubernetes version passed into the `kubeadm init` command (see `kubernetes_version_kubeadm`). The `kubernetes_version_rhel_package` variable must be a specific Kubernetes release, and is used to pin the version on Red Hat / CentOS servers.
 
-### 4 - Deploy applications to the Kubernetes cluster
+    kubernetes_role: master
 
-For details on how to deploy all these examples, please refer to chapter 14 in Ansible for DevOps. One quick example you can test locally:
+Whether the particular server will serve as a Kubernetes `master` (default) or `node`. The master will have `kubeadm init` run on it to intialize the entire K8s control plane, while `node`s will have `kubeadm join` run on them to join them to the `master`.
 
-  1. cd into the 'examples' directory, and run the `k8s-module.yml` playbook, which creates an Nginx deployment and service on the cluster: `ansible-playbook -i ../inventory k8s-module.yml`
-  2. Copy the nodePort from the final task output in that playbook; this is the port on which Nginx is accessible.
-  3. Open your browser and access [http://cluster.k8s.test:32474/](http://cluster.k8s.test:32474/) (assuming nodePort is `32474`).
+    kubernetes_kubelet_extra_args: ""
+    kubernetes_kubelet_extra_args_config_file: /etc/default/kubelet
 
-## Notes
+Extra args to pass to `kubelet` during startup. E.g. to allow `kubelet` to start up even if there is swap is enabled on your server, set this to: `"--fail-swap-on=false"`. Or to specify the node-ip advertised by `kubelet`, set this to `"--node-ip={{ ansible_host }}"`.
 
-  - To shut down the virtual machine, enter `vagrant halt` in the Terminal in the same folder that has the `Vagrantfile`. To destroy it completely (if you want to save a little disk space, or want to rebuild it from scratch with `vagrant up` again), type in `vagrant destroy`.
+    kubernetes_kubeadm_init_extra_opts: ""
 
-## About the Author
+Extra args to pass to `kubeadm init` during K8s control plane initialization. E.g. to specify extra Subject Alternative Names for API server certificate, set this to: `"--apiserver-cert-extra-sans my-custom.host"`
 
-This project was created by [Jeff Geerling](https://www.jeffgeerling.com/) as an example for [Ansible for DevOps](https://www.ansiblefordevops.com/).
+    kubernetes_allow_pods_on_master: true
+
+Whether to remove the taint that denies pods from being deployed to the Kubernetes master. If you have a single-node cluster, this should definitely be `True`. Otherwise, set to `False` if you want a dedicated Kubernetes master which doesn't run any other pods.
+
+    kubernetes_enable_web_ui: false
+    kubernetes_web_ui_manifest_file: https://raw.githubusercontent.com/kubernetes/dashboard/master/src/deploy/recommended/kubernetes-dashboard.yaml
+
+Whether to enable the Kubernetes web dashboard UI (only accessible on the master itself, or proxied), and the file containing the web dashboard UI manifest.
+
+    kubernetes_pod_network_cidr: '10.244.0.0/16'
+    kubernetes_apiserver_advertise_address: ''
+    kubernetes_version_kubeadm: 'stable-{{ kubernetes_version }}'
+    kubernetes_ignore_preflight_errors: 'all'
+
+Options passed to `kubeadm init` when initializing the Kubernetes master. The `kubernetes_apiserver_advertise_address` defaults to `ansible_default_ipv4.address` if it's left empty.
+
+    kubernetes_apt_release_channel: main
+    kubernetes_apt_repository: "deb http://apt.kubernetes.io/ kubernetes-xenial {{ kubernetes_apt_release_channel }}"
+    kubernetes_apt_ignore_key_error: false
+
+Apt repository options for Kubernetes installation.
+
+    kubernetes_yum_arch: x86_64
+
+Yum repository options for Kubernetes installation.
+
+    kubernetes_flannel_manifest_file_rbac: https://raw.githubusercontent.com/coreos/flannel/master/Documentation/k8s-manifests/kube-flannel-rbac.yml
+    kubernetes_flannel_manifest_file: https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
+
+Flannel manifest files to apply to the Kubernetes cluster to enable networking. You can copy your own files to your server and apply them instead, if you need to customize the Flannel networking configuration.
+
+## Dependencies
+
+None.
+
+## Example Playbooks
+
+### Single node (master-only) cluster
+
+```yaml
+- hosts: all
+
+  vars:
+    kubernetes_allow_pods_on_master: true
+
+  roles:
+    - geerlingguy.docker
+    - geerlingguy.kubernetes
+```
+
+### Two or more nodes (single master) cluster
+
+Master inventory vars:
+
+```yaml
+kubernetes_role: "master"
+```
+
+Node(s) inventory vars:
+
+```yaml
+kubernetes_role: "node"
+```
+
+Playbook:
+
+```yaml
+- hosts: all
+
+  vars:
+    kubernetes_allow_pods_on_master: true
+
+  roles:
+    - geerlingguy.docker
+    - geerlingguy.kubernetes
+```
+
+Then, log into the Kubernetes master, and run `kubectl get nodes` as root, and you should see a list of all the servers.
+
+## License
+
+MIT / BSD
+
+## Author Information
+
+This role was created in 2018 by [Jeff Geerling](https://www.jeffgeerling.com/), author of [Ansible for DevOps](https://www.ansiblefordevops.com/).
